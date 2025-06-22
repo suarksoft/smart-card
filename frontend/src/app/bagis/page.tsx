@@ -109,8 +109,9 @@ export default function BagisPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          wallet: walletAddress, 
-          amount: amount 
+          walletAddress: walletAddress, 
+          amount: amount,
+          projectId: causeId
         }),
       })
       

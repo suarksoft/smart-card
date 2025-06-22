@@ -169,4 +169,3 @@ Teşekkürler! Sorularınızı bekliyorum."
 
 ---
 
-*Bu demo rehberi hackathon sunumunuz için hazırlanmıştır. Projenin tüm özelliklerini etkili bir şekilde göstermenize yardımcı olacaktır.* 

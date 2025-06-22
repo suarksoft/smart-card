@@ -97,7 +97,11 @@ export default function CommunityFundPanel({
       if (data.success) {
         onNotification(`${donationAmount} token başarıyla topluluk fonuna bağışlandı`)
         setAmount("")
-        setCommunityFundBalance(data.communityFundBalance)
+        
+        // Backend'den dönen güncel bakiye ile state'i güncelle
+        if (data.communityFundBalance !== undefined) {
+          setCommunityFundBalance(data.communityFundBalance)
+        }
         
         // İstatistikleri yenile
         const statsRes = await fetch("http://localhost:4000/api/community-fund-stats")

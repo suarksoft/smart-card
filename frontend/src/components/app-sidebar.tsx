@@ -35,7 +35,8 @@ const mainMenuItems = [
 
 const specialModules = [
   { href: "/tohum", label: "Tohum ID", icon: Seedling },
-  { href: "/bagis", label: "Bağış Yap", icon: Gift },
+  { href: "/bagis", label: "Bağış Yap ", icon: Gift },
+  { href: "/proje-basvuru", label: "Fon Topla ", icon: TrendingUp },
 ]
 
 export function AppSidebar() {

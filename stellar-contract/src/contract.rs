@@ -1,90 +1,164 @@
 //src/contract.rs
-use soroban_sdk::symbol_short;
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol};
-use soroban_token_sdk::{metadata::TokenMetadata, TokenUtils};
+use crate::admin::{read_administrator, write_administrator};
+use crate::allowance::{read_allowance, spend_allowance, write_allowance};
+use crate::balance::{read_balance, receive_balance, spend_balance};
+use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
+use crate::storage_types::{
+    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+};
+use soroban_sdk::token::{self, Interface as _};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_token_sdk::metadata::TokenMetadata;
+use soroban_token_sdk::TokenUtils;
 
-const ADMIN_KEY: Symbol = symbol_short!("admin");
-const META_KEY: Symbol = symbol_short!("meta");
-const WATER_CARD_KEY: Symbol = symbol_short!("wtrcard");
+fn check_nonnegative_amount(amount: i128) {
+    if amount < 0 {
+        panic!("negative amount is not allowed: {}", amount)
+    }
+}
 
 #[contract]
-pub struct WaterToken;
+pub struct Token;
 
 #[contractimpl]
-impl WaterToken {
+impl Token {
     pub fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
-        e.storage().instance().set(&ADMIN_KEY, &admin);
-        e.storage().instance().set(
-            &META_KEY,
-            &TokenMetadata {
+        if read_administrator(&e).is_some() {
+            panic!("already initialized")
+        }
+        write_administrator(&e, &admin);
+        write_metadata(
+            &e,
+            TokenMetadata {
                 decimal,
                 name,
                 symbol,
             },
-        );
+        )
     }
 
-    // Su kartını kullanıcı hesabına kaydet
-    pub fn register_water_card(e: Env, user: Address, card_id: String) {
-        let admin: Address = e.storage().instance().get(&ADMIN_KEY).unwrap();
-        admin.require_auth();
-        e.storage().instance().set(&card_id, &user);
-    }
-
-    // Kullanıcıya su hakkı tokenlerini mint et
     pub fn mint(e: Env, to: Address, amount: i128) {
-        let admin: Address = e.storage().instance().get(&ADMIN_KEY).unwrap();
+        check_nonnegative_amount(amount);
+        let admin = read_administrator(&e).unwrap();
         admin.require_auth();
-        let mut balance: i128 = e.storage().instance().get(&to).unwrap_or(0);
-        balance += amount;
-        e.storage().instance().set(&to, &balance);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        receive_balance(&e, to.clone(), amount);
         TokenUtils::new(&e).events().mint(admin, to, amount);
     }
 
-    // Su tasarrufu ödülünü mint et
-    pub fn mint_conservation_reward(e: Env, to: Address, amount: i128) {
-        let admin: Address = e.storage().instance().get(&ADMIN_KEY).unwrap();
+    pub fn set_admin(e: Env, new_admin: Address) {
+        let admin = read_administrator(&e).unwrap();
         admin.require_auth();
-        let mut balance: i128 = e.storage().instance().get(&to).unwrap_or(0);
-        balance += amount;
-        e.storage().instance().set(&to, &balance);
-        TokenUtils::new(&e).events().mint(admin, to, amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        write_administrator(&e, &new_admin);
+        TokenUtils::new(&e).events().set_admin(admin, new_admin);
+    }
+}
+
+#[contractimpl]
+impl token::Interface for Token {
+    fn allowance(e: Env, from: Address, spender: Address) -> i128 {
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        read_allowance(&e, from, spender).amount
     }
 
-    // Kullanıcılar arasında token transferi
-    pub fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+    fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
         from.require_auth();
-        let mut from_balance: i128 = e.storage().instance().get(&from).unwrap_or(0);
-        let mut to_balance: i128 = e.storage().instance().get(&to).unwrap_or(0);
-        if from_balance < amount {
-            panic!("Yetersiz su hakkı bakiyesi");
-        }
-        from_balance -= amount;
-        to_balance += amount;
-        e.storage().instance().set(&from, &from_balance);
-        e.storage().instance().set(&to, &to_balance);
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        write_allowance(&e, from.clone(), spender.clone(), amount, expiration_ledger);
+        TokenUtils::new(&e)
+            .events()
+            .approve(from, spender, amount, expiration_ledger);
+    }
+
+    fn balance(e: Env, id: Address) -> i128 {
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        read_balance(&e, id)
+    }
+
+    fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
         TokenUtils::new(&e).events().transfer(from, to, amount);
     }
 
-    // Topluluk su fonuna bağış yap
-    pub fn donate_to_fund(e: Env, from: Address, amount: i128) {
-        from.require_auth();
-        let fund_address: Address = e.storage().instance().get(&symbol_short!("fund")).unwrap();
-        let mut from_balance: i128 = e.storage().instance().get(&from).unwrap_or(0);
-        let mut fund_balance: i128 = e.storage().instance().get(&fund_address).unwrap_or(0);
-        if from_balance < amount {
-            panic!("Yetersiz su hakkı bakiyesi");
-        }
-        from_balance -= amount;
-        fund_balance += amount;
-        e.storage().instance().set(&from, &from_balance);
-        e.storage().instance().set(&fund_address, &fund_balance);
-        TokenUtils::new(&e)
-            .events()
-            .transfer(from, fund_address, amount);
+    fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        TokenUtils::new(&e).events().transfer(from, to, amount)
     }
 
-    pub fn balance(e: Env, id: Address) -> i128 {
-        e.storage().instance().get(&id).unwrap_or(0)
+    fn burn(e: Env, from: Address, amount: i128) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_balance(&e, from.clone(), amount);
+        TokenUtils::new(&e).events().burn(from, amount);
+    }
+
+    fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        TokenUtils::new(&e).events().burn(from, amount)
+    }
+
+    fn decimals(e: Env) -> u32 {
+        read_decimal(&e)
+    }
+
+    fn name(e: Env) -> String {
+        read_name(&e)
+    }
+
+    fn symbol(e: Env) -> String {
+        read_symbol(&e)
     }
 }

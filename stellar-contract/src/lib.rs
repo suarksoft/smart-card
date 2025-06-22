@@ -1,3 +1,10 @@
 #![no_std]
+
+mod admin;
+mod allowance;
+mod balance;
 mod contract;
-pub use crate::contract::WaterToken;
+mod metadata;
+mod storage_types;
+
+pub use crate::contract::TokenClient;
